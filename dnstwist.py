@@ -20,6 +20,38 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Find similar-looking domain names that adversaries can use to attack you. Can
+detect typo squatters, phishing attacks, fraud and corporate espionage. Useful
+as an additional source of targeted threat intelligence.
+
+Usage:
+ dnstwist DOMAIN [--registered] [--all | --banners | --dictionary=<file> | --geoip | --History=<file> | --mxcheck | --format=<file>] [--ssdeep | --threads=<n> | --whois | --tld=<file> | --nameservers=<address> | --port=<int> | --useragent=<string>]
+
+  dnstwist (-h | --help)
+  dnstwist --version
+
+Options:
+  DOMAIN                                Domain name or URL to check
+  -a --all                              Show all DNS records
+  -b --banners                          Determine HTTP and SMTP service banners
+  -d <file> --dictionary=<file>         Generate additional domains using dictionary FILE
+  -g --geoip                            Perform lookup for GeoIP location
+  -H <file> --History=<file>            Uses Historical json file to find new domains.
+  -m --mxcheck                          Check if MX host can be used to intercept e-mails
+  -f <string> --format=<string>         Output format of cli, csv, json, return, or idle [default: cli]
+  -r --registered                       Show only registered domain names
+  -s --ssdeep                           Fetch web pages and compare their fuzzy hashes to evaluate similarity
+  -t <n> --threads=<n>                  Start specified NUMBER of threads [default: 10]
+  -w --whois                            Perform lookup for WHOIS creation/update time (slow)
+  -t <file> --tld=<file>                Generate additional domains by swapping TLD from file
+  -n <address> --nameservers=<address>  Comma separated list of DNS servers to query
+  -p <int> --port=<int>                 The port number to send queries to
+  -u <string> --useragent=<string>      User-agent STRING to send with HTTP requests (default: Mozilla/5.0 dnstwist/<version>)
+  -h --help                             Show this screen.
+  --version                             Show version.
+
+"""
 
 __author__ = "mod by Bryce B"
 __version__ = "20200429"
@@ -30,12 +62,13 @@ import sys
 import socket
 import signal
 import time
-import argparse
 import threading
 from random import randint
 from os import path
 import smtplib
 import json
+from docopt import docopt
+from schema import And, Optional, Or, Schema, Use
 
 try:
     import queue
@@ -107,9 +140,40 @@ else:
     ) = FG_YEL = FG_GRE = FG_MAG = FG_CYA = FG_BLU = FG_RST = ST_BRI = ST_RST = ""
 
 
+def validate_args(args):
+    s = Schema(
+        {
+            "DOMAIN": str,  # must exists,
+            Optional("--all", default=None): Or(None, bool),
+            Optional("--banners", default=None): Or(None, bool),
+            Optional("--dictionary", default=None): Or(None, path.exists),
+            Optional("--geoip", default=None): Or(None, bool),
+            Optional("--History", default=None): Or(None, path.exists),
+            Optional("--mxcheck", default=None): Or(None, bool),
+            Optional("--format", default="cli"): And(
+                Use(str, lambda s: s in ["cli", "csv", "json", "return", "idle"])
+            ),
+            Optional("--registered", default=None): Or(None, bool),
+            Optional("--ssdeep", default=None): Or(None, bool),
+            Optional("--threads", default=10): And(Use(int), lambda n: 0 < n),
+            Optional("--whois", default=None): Or(None, bool),
+            Optional("--tld", default=None): Or(None, path.exists),
+            Optional("--nameservers", default=None): Or(None, str),
+            Optional("--port", default=None): Or(
+                None, And(Use(int), lambda n: 0 < n < 65536)
+            ),
+            Optional("--useragent", default=f"Mozilla/5.0 dnstwist/{__version__}"): Or(
+                None, str
+            ),
+        }
+    )
+
+    return s.validate(args)
+
+
 def p_cli(data):
     global args
-    if args.format == "cli":
+    if args["--format"] == "cli":
         sys.stdout.write(data)
         sys.stdout.flush()
 
@@ -121,13 +185,13 @@ def p_err(data):
 
 def p_csv(data):
     global args
-    if args.format == "csv":
+    if args["--format"] == "csv":
         sys.stdout.write(data)
 
 
 def p_json(data):
     global args
-    if args.format == "json":
+    if args["--format"] == "json":
         sys.stdout.write(data)
 
 
@@ -403,132 +467,79 @@ class DomainFuzz:
 
     def __homoglyph(self):
         glyphs = {
-            "a": [
-                u"à",
-                u"á",
-                u"â",
-                u"ã",
-                u"ä",
-                u"å",
-                u"ɑ",
-                u"ạ",
-                u"ǎ",
-                u"ă",
-                u"ȧ",
-                u"ą",
-            ],
-            "b": ["d", "lb", u"ʙ", u"ɓ", u"ḃ", u"ḅ", u"ḇ", u"ƅ"],
-            "c": ["e", u"ƈ", u"ċ", u"ć", u"ç", u"č", u"ĉ"],
-            "d": [
-                "b",
-                "cl",
-                "dl",
-                u"ɗ",
-                u"đ",
-                u"ď",
-                u"ɖ",
-                u"ḑ",
-                u"ḋ",
-                u"ḍ",
-                u"ḏ",
-                u"ḓ",
-            ],
+            "a": ["à", "á", "â", "ã", "ä", "å", "ɑ", "ạ", "ǎ", "ă", "ȧ", "ą",],
+            "b": ["d", "lb", "ʙ", "ɓ", "ḃ", "ḅ", "ḇ", "ƅ"],
+            "c": ["e", "ƈ", "ċ", "ć", "ç", "č", "ĉ"],
+            "d": ["b", "cl", "dl", "ɗ", "đ", "ď", "ɖ", "ḑ", "ḋ", "ḍ", "ḏ", "ḓ",],
             "e": [
                 "c",
-                u"é",
-                u"è",
-                u"ê",
-                u"ë",
-                u"ē",
-                u"ĕ",
-                u"ě",
-                u"ė",
-                u"ẹ",
-                u"ę",
-                u"ȩ",
-                u"ɇ",
-                u"ḛ",
+                "é",
+                "è",
+                "ê",
+                "ë",
+                "ē",
+                "ĕ",
+                "ě",
+                "ė",
+                "ẹ",
+                "ę",
+                "ȩ",
+                "ɇ",
+                "ḛ",
             ],
-            "f": [u"ƒ", u"ḟ"],
-            "g": ["q", u"ɢ", u"ɡ", u"ġ", u"ğ", u"ǵ", u"ģ", u"ĝ", u"ǧ", u"ǥ"],
-            "h": [
-                "lh",
-                u"ĥ",
-                u"ȟ",
-                u"ħ",
-                u"ɦ",
-                u"ḧ",
-                u"ḩ",
-                u"ⱨ",
-                u"ḣ",
-                u"ḥ",
-                u"ḫ",
-                u"ẖ",
-            ],
+            "f": ["ƒ", "ḟ"],
+            "g": ["q", "ɢ", "ɡ", "ġ", "ğ", "ǵ", "ģ", "ĝ", "ǧ", "ǥ"],
+            "h": ["lh", "ĥ", "ȟ", "ħ", "ɦ", "ḧ", "ḩ", "ⱨ", "ḣ", "ḥ", "ḫ", "ẖ",],
             "i": [
                 "1",
                 "l",
-                u"í",
-                u"ì",
-                u"ï",
-                u"ı",
-                u"ɩ",
-                u"ǐ",
-                u"ĭ",
-                u"ỉ",
-                u"ị",
-                u"ɨ",
-                u"ȋ",
-                u"ī",
+                "í",
+                "ì",
+                "ï",
+                "ı",
+                "ɩ",
+                "ǐ",
+                "ĭ",
+                "ỉ",
+                "ị",
+                "ɨ",
+                "ȋ",
+                "ī",
             ],
-            "j": [u"ʝ", u"ɉ"],
-            "k": ["lk", "ik", "lc", u"ḳ", u"ḵ", u"ⱪ", u"ķ"],
-            "l": ["1", "i", u"ɫ", u"ł"],
-            "m": ["n", "nn", "rn", "rr", u"ṁ", u"ṃ", u"ᴍ", u"ɱ", u"ḿ"],
-            "n": ["m", "r", u"ń", u"ṅ", u"ṇ", u"ṉ", u"ñ", u"ņ", u"ǹ", u"ň", u"ꞑ"],
-            "o": ["0", u"ȯ", u"ọ", u"ỏ", u"ơ", u"ó", u"ö"],
-            "p": [u"ƿ", u"ƥ", u"ṕ", u"ṗ"],
-            "q": ["g", u"ʠ"],
-            "r": [
-                u"ʀ",
-                u"ɼ",
-                u"ɽ",
-                u"ŕ",
-                u"ŗ",
-                u"ř",
-                u"ɍ",
-                u"ɾ",
-                u"ȓ",
-                u"ȑ",
-                u"ṙ",
-                u"ṛ",
-                u"ṟ",
-            ],
-            "s": [u"ʂ", u"ś", u"ṣ", u"ṡ", u"ș", u"ŝ", u"š"],
-            "t": [u"ţ", u"ŧ", u"ṫ", u"ṭ", u"ț", u"ƫ"],
+            "j": ["ʝ", "ɉ"],
+            "k": ["lk", "ik", "lc", "ḳ", "ḵ", "ⱪ", "ķ"],
+            "l": ["1", "i", "ɫ", "ł"],
+            "m": ["n", "nn", "rn", "rr", "ṁ", "ṃ", "ᴍ", "ɱ", "ḿ"],
+            "n": ["m", "r", "ń", "ṅ", "ṇ", "ṉ", "ñ", "ņ", "ǹ", "ň", "ꞑ"],
+            "o": ["0", "ȯ", "ọ", "ỏ", "ơ", "ó", "ö"],
+            "p": ["ƿ", "ƥ", "ṕ", "ṗ"],
+            "q": ["g", "ʠ"],
+            "r": ["ʀ", "ɼ", "ɽ", "ŕ", "ŗ", "ř", "ɍ", "ɾ", "ȓ", "ȑ", "ṙ", "ṛ", "ṟ",],
+            "s": ["ʂ", "ś", "ṣ", "ṡ", "ș", "ŝ", "š"],
+            "t": ["ţ", "ŧ", "ṫ", "ṭ", "ț", "ƫ"],
             "u": [
-                u"ᴜ",
-                u"ǔ",
-                u"ŭ",
-                u"ü",
-                u"ʉ",
-                u"ù",
-                u"ú",
-                u"û",
-                u"ũ",
-                u"ū",
-                u"ų",
-                u"ư",
-                u"ů",
-                u"ű",
-                u"ȕ",
-                u"ȗ",
-                u"ụ",
+                "ᴜ",
+                "ǔ",
+                "ŭ",
+                "ü",
+                "ʉ",
+                "ù",
+                "ú",
+                "û",
+                "ũ",
+                "ū",
+                "ų",
+                "ư",
+                "ů",
+                "ű",
+                "ȕ",
+                "ȗ",
+                "ụ",
             ],
-            "v": [u"ṿ", u"ⱱ", u"ᶌ", u"ṽ", u"ⱴ"],
-            "w": ["vv", u"ŵ", u"ẁ", u"ẃ", u"ẅ", u"ⱳ", u"ẇ", u"ẉ", u"ẘ"],
-            "y": [u"ʏ", u"ý", u"ÿ", u"ŷ", u"ƴ", u"ȳ", u"ɏ", u"ỿ", u"ẏ", u"ỵ"],
-            "z": [u"ʐ", u"ż", u"ź", u"ᴢ", u"ƶ", u"ẓ", u"ẕ", u"ⱬ"],
+            "v": ["ṿ", "ⱱ", "ᶌ", "ṽ", "ⱴ"],
+            "w": ["vv", "ŵ", "ẁ", "ẃ", "ẅ", "ⱳ", "ẇ", "ẉ", "ẘ"],
+            "y": ["ʏ", "ý", "ÿ", "ŷ", "ƴ", "ȳ", "ɏ", "ỿ", "ẏ", "ỵ"],
+            "z": ["ʐ", "ż", "ź", "ᴢ", "ƶ", "ẓ", "ẕ", "ⱬ"],
         }
 
         result_1pass = set()
@@ -890,7 +901,7 @@ class DomainThread(threading.Thread):
             http.connect((ip, 80))
             http.send(
                 b"HEAD / HTTP/1.1\r\nHost: %s\r\nUser-agent: %s\r\n\r\n"
-                % (vhost.encode(), args.useragent.encode())
+                % (vhost.encode(), args["--useragent"].encode())
             )
             response = http.recv(1024).decode()
             http.close()
@@ -961,11 +972,11 @@ class DomainThread(threading.Thread):
             domain["domain-name"] = domain["domain-name"].encode("idna").decode()
 
             if self.option_extdns:
-                if args.nameservers:
+                if args["--nameservers"]:
                     resolv = dns.resolver.Resolver(configure=False)
-                    resolv.nameservers = args.nameservers.split(",")
-                    if args.port:
-                        resolv.port = args.port
+                    resolv.nameservers = args["--nameservers"].split(",")
+                    if args["--port"]:
+                        resolv.port = args["--port"]
                 else:
                     resolv = dns.resolver.Resolver()
 
@@ -1104,7 +1115,7 @@ class DomainThread(threading.Thread):
                             + self.uri_path
                             + self.uri_query,
                             timeout=REQUEST_TIMEOUT_HTTP,
-                            headers={"User-Agent": args.useragent},
+                            headers={"User-Agent": args["--useragent"]},
                             verify=False,
                         )
                         # ssdeep_fuzz = ssdeep.hash(req.text.replace(' ', '').replace('\n', ''))
@@ -1123,7 +1134,7 @@ class DomainThread(threading.Thread):
 
 
 def one_or_all(answers):
-    if args.all:
+    if args["--all"]:
         result = ";".join(answers)
     else:
         if len(answers):
@@ -1254,114 +1265,21 @@ def generate_cli(domains):
     return output
 
 
-def main():
+def main(args_input=False):
+    # Uses docopt if args_input not provided.
+    global args
+    if not args_input:
+        args = validate_args(docopt(__doc__, version=__version__))
+    else:
+        args = validate_args(args_input)
+
     signal.signal(signal.SIGINT, sigint_handler)
 
-    parser = argparse.ArgumentParser(
-        usage="%s [OPTION]... DOMAIN" % sys.argv[0],
-        add_help=False,
-        description="""Domain name permutation engine for detecting homograph phishing attacks, """
-        """typosquatting, fraud and brand impersonation.""",
-        formatter_class=lambda prog: argparse.HelpFormatter(prog, max_help_position=30),
-    )
-
-    parser.add_argument("domain", help="Domain name or URL to scan")
-    parser.add_argument("-a", "--all", action="store_true", help="Show all DNS records")
-    parser.add_argument(
-        "-b",
-        "--banners",
-        action="store_true",
-        help="Determine HTTP and SMTP service banners",
-    )
-    parser.add_argument(
-        "-d",
-        "--dictionary",
-        type=str,
-        metavar="FILE",
-        help="Generate more domains using dictionary FILE",
-    )
-    parser.add_argument(
-        "-g", "--geoip", action="store_true", help="Lookup for GeoIP location"
-    )
-    parser.add_argument(
-        "-m",
-        "--mxcheck",
-        action="store_true",
-        help="Check if MX can be used to intercept emails",
-    )
-    parser.add_argument(
-        "-f",
-        "--format",
-        type=str,
-        choices=["cli", "csv", "json", "idle"],
-        default="cli",
-        help="Output format (default: cli)",
-    )
-    parser.add_argument(
-        "-r",
-        "--registered",
-        action="store_true",
-        help="Show only registered domain names",
-    )
-    parser.add_argument(
-        "-s",
-        "--ssdeep",
-        action="store_true",
-        help="Fetch web pages and compare their fuzzy hashes to evaluate similarity",
-    )
-    parser.add_argument(
-        "-t",
-        "--threads",
-        type=int,
-        metavar="NUMBER",
-        default=THREAD_COUNT_DEFAULT,
-        help="Start specified NUMBER of threads (default: %d)" % THREAD_COUNT_DEFAULT,
-    )
-    parser.add_argument(
-        "-w",
-        "--whois",
-        action="store_true",
-        help="Lookup for WHOIS creation/update time (slow!)",
-    )
-    parser.add_argument(
-        "--tld",
-        type=str,
-        metavar="FILE",
-        help="Generate more domains by swapping TLD from FILE",
-    )
-    parser.add_argument(
-        "--nameservers",
-        type=str,
-        metavar="LIST",
-        help="DNS servers to query (separated with commas)",
-    )
-    parser.add_argument(
-        "--port", type=int, metavar="PORT", help="DNS server port number (default: 53)"
-    )
-    parser.add_argument(
-        "--useragent",
-        type=str,
-        metavar="STRING",
-        default="Mozilla/5.0 dnstwist/%s" % __version__,
-        help="User-Agent STRING to send with HTTP requests (default: Mozilla/5.0 dnstwist/%s)"
-        % __version__,
-    )
-
-    if len(sys.argv) < 2:
-        sys.stdout.write(
-            "%sdnstwist %s by <%s>%s\n\n" % (ST_BRI, __version__, __email__, ST_RST)
-        )
-        parser.print_help()
-        bye(0)
-
-    global args
-    args = parser.parse_args()
-
-    if args.threads < 1:
-        args.threads = THREAD_COUNT_DEFAULT
+    if args["--threads"] < 1:
+        args["--threads"] = THREAD_COUNT_DEFAULT
 
     try:
-        url = UrlParser(args.domain)
+        url = UrlParser(args["DOMAIN"])
     except ValueError as err:
         p_err("Error: %s\n" % err)
         bye(-1)
@@ -1370,37 +1288,37 @@ def main():
     dfuzz.generate()
     domains = dfuzz.domains
 
-    if args.dictionary:
-        if not path.exists(args.dictionary):
-            p_err("Error: Dictionary not found: %s\n" % args.dictionary)
+    if args["--dictionary"]:
+        if not path.exists(args["--dictionary"]):
+            p_err("Error: Dictionary not found: %s\n" % args["--dictionary"])
             bye(-1)
         ddict = DomainDict(url.domain)
-        ddict.load_dict(args.dictionary)
+        ddict.load_dict(args["--dictionary"])
         ddict.generate()
         domains += ddict.domains
 
-    if args.tld:
-        if not path.exists(args.tld):
-            p_err("Error: Dictionary not found: %s\n" % args.tld)
+    if args["--tld"]:
+        if not path.exists(args["--tld"]):
+            p_err("Error: Dictionary not found: %s\n" % args["--tld"])
             bye(-1)
         tlddict = TldDict(url.domain)
-        tlddict.load_dict(args.tld)
+        tlddict.load_dict(args["--tld"])
         tlddict.generate()
         domains += tlddict.domains
 
-    if args.format == "idle":
+    if args["--format"] == "idle":
         sys.stdout.write(generate_idle(domains))
         bye(0)
 
     if not MODULE_DNSPYTHON:
         p_err("Notice: Missing module DNSPython (DNS features limited)\n")
-    if not MODULE_GEOIP and args.geoip:
+    if not MODULE_GEOIP and args["--geoip"]:
         p_err("Notice: Missing module GeoIP (geographical location not available)\n")
-    if not MODULE_WHOIS and args.whois:
+    if not MODULE_WHOIS and args["--whois"]:
         p_err("Notice: Missing module whois (WHOIS database not accessible)\n")
-    if not MODULE_SSDEEP and args.ssdeep:
+    if not MODULE_SSDEEP and args["--ssdeep"]:
         p_err("Notice: Missing module ssdeep (fuzzy hashes not available)\n")
-    if not MODULE_REQUESTS and args.ssdeep:
+    if not MODULE_REQUESTS and args["--ssdeep"]:
         p_err("Notice: Missing module Requests (webpage downloads not possible)\n")
 
     p_cli(
@@ -1418,33 +1336,33 @@ def main():
         + ST_RST
     )
 
-    if MODULE_WHOIS and args.whois:
+    if MODULE_WHOIS and args["--whois"]:
         p_err("Notice: Disabled multithreading in order to query WHOIS servers\n")
-        args.threads = 1
+        args["--threads"] = 1
 
-    if args.ssdeep and MODULE_SSDEEP and MODULE_REQUESTS:
+    if args["--ssdeep"] and MODULE_SSDEEP and MODULE_REQUESTS:
         p_cli("Fetching content from: " + url.get_full_uri() + " ... ")
         try:
             req = requests.get(
                 url.get_full_uri(),
                 timeout=REQUEST_TIMEOUT_HTTP,
-                headers={"User-Agent": args.useragent},
+                headers={"User-Agent": args["--useragent"]},
             )
         except requests.exceptions.ConnectionError:
             p_cli("Connection error\n")
-            args.ssdeep = False
+            args["--ssdeep"] = False
             pass
         except requests.exceptions.HTTPError:
             p_cli("Invalid HTTP response\n")
-            args.ssdeep = False
+            args["--ssdeep"] = False
             pass
         except requests.exceptions.Timeout:
             p_cli("Timeout (%d seconds)\n" % REQUEST_TIMEOUT_HTTP)
-            args.ssdeep = False
+            args["--ssdeep"] = False
             pass
         except Exception:
             p_cli("Failed!\n")
-            args.ssdeep = False
+            args["--ssdeep"] = False
             pass
         else:
             p_cli(
@@ -1455,7 +1373,7 @@ def main():
                 # ssdeep_orig = ssdeep.hash(req.text.replace(' ', '').replace('\n', ''))
                 ssdeep_orig = ssdeep.hash(req.text)
             else:
-                args.ssdeep = False
+                args["--ssdeep"] = False
 
     p_cli("Processing %d domain variants " % len(domains))
 
@@ -1467,7 +1385,7 @@ def main():
     for i in range(len(domains)):
         jobs.put(domains[i])
 
-    for i in range(args.threads):
+    for i in range(args["--threads"]):
         worker = DomainThread(jobs)
         worker.setDaemon(True)
 
@@ -1479,21 +1397,21 @@ def main():
 
         if MODULE_DNSPYTHON:
             worker.option_extdns = True
-        if MODULE_WHOIS and args.whois:
+        if MODULE_WHOIS and args["--whois"]:
             worker.option_whois = True
-        if MODULE_GEOIP and args.geoip:
+        if MODULE_GEOIP and args["--geoip"]:
             worker.option_geoip = True
-        if args.banners:
+        if args["--banners"]:
             worker.option_banners = True
         if (
-            args.ssdeep
+            args["--ssdeep"]
             and MODULE_REQUESTS
             and MODULE_SSDEEP
             and "ssdeep_orig" in locals()
         ):
             worker.option_ssdeep = True
             worker.ssdeep_orig = ssdeep_orig
-        if args.mxcheck:
+        if args["--mxcheck"]:
             worker.option_mxcheck = True
 
         worker.start()
@@ -1516,13 +1434,13 @@ def main():
     hits_percent = 100 * hits_total / len(domains)
     p_cli(" %d hits (%d%%)\n\n" % (hits_total, hits_percent))
 
-    if args.registered:
+    if args["--registered"]:
         domains[:] = [d for d in domains if len(d) > 2]
 
     if domains:
-        if args.format == "csv":
+        if format == "csv":
             p_csv(generate_csv(domains))
-        elif args.format == "json":
+        elif args["--format"] == "json":
             p_json(generate_json(domains))
         else:
             p_cli(generate_cli(domains))
